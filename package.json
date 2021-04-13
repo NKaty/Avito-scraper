@@ -5,15 +5,74 @@
   "main": "index.js",
   "scripts": {
     "dev": "npx tsc -w",
-    "build": "npx tsc"
+    "build": "npx tsc",
+    "lint:check": "eslint src/. --ext .js,.ts --max-warnings=0; exit 0",
+    "lint:fix": "eslint --fix --max-warnings=0",
+    "prettier": "prettier --write"
   },
   "author": "NKaty",
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^14.14.37",
+    "@typescript-eslint/eslint-plugin": "^4.22.0",
+    "@typescript-eslint/parser": "^4.22.0",
+    "eslint": "^7.24.0",
+    "eslint-config-prettier": "^8.1.0",
+    "eslint-config-standard": "^16.0.2",
+    "eslint-plugin-prettier": "^3.3.1",
+    "husky": "^4.3.8",
+    "lint-staged": "^10.5.3",
+    "prettier": "^2.2.1",
     "typescript": "^4.2.4"
   },
   "dependencies": {
     "puppeteer": "^8.0.0"
+  },
+  "eslintConfig": {
+    "parser": "@typescript-eslint/parser",
+    "parserOptions": {
+      "project": "./tsconfig.json"
+    },
+    "extends": [
+      "standard",
+      "plugin:@typescript-eslint/recommended",
+      "prettier"
+    ],
+    "rules": {
+      "semi": [
+        2,
+        "always"
+      ],
+      "prettier/prettier": [
+        "error"
+      ]
+    },
+    "env": {
+      "es6": true,
+      "node": true
+    },
+    "plugins": [
+      "@typescript-eslint",
+      "prettier"
+    ]
+  },
+  "prettier": {
+    "singleQuote": true,
+    "bracketSpacing": true,
+    "tabWidth": 2,
+    "semi": true,
+    "arrowParens": "avoid",
+    "trailingComma": "es5"
+  },
+  "lint-staged": {
+    "src/**/*.{js,ts}": [
+      "npm run prettier",
+      "npm run lint:fix"
+    ]
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
   }
 }
