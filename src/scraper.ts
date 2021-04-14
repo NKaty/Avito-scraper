@@ -1,4 +1,5 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
+import getDate from './utils/getDate';
 
 type Nullable<T> = T | null;
 
@@ -107,7 +108,7 @@ class Scraper {
         '.title-info-actions .title-info-metadata-item-redesign',
         item => item.textContent
       );
-      if (date) date = date.trim();
+      if (date) date = getDate(date.trim());
     } catch (err) {
       console.log('Could not get date: ', err);
     }
@@ -122,7 +123,7 @@ class Scraper {
       const page = await this.browser.newPage();
       await page.setDefaultNavigationTimeout(0);
       await page.goto(url);
-      await page.waitForSelector('.item-view-q');
+      await page.waitForSelector('.item-view');
       advert = {
         title: await this.getTitle(page),
         description: await this.getDescription(page),
