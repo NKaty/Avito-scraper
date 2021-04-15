@@ -1,4 +1,7 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
+import { Writable } from 'stream';
+import { createWriteStream } from 'fs';
+import { resolve } from 'path';
 import getDate from './utils/getDate';
 
 type Nullable<T> = T | null;
@@ -14,7 +17,9 @@ interface Advert {
 }
 
 class Scraper {
-  browser: Nullable<Browser> = null;
+  private browser: Nullable<Browser> = null;
+  private outputStream: Nullable<Writable> = null;
+  private firstAdvert = true;
 
   private async startBrowser(): Promise<void> {
     try {
@@ -164,34 +169,64 @@ class Scraper {
 
   private async getAdverts(urls: string[]): Promise<void> {
     for (const link of urls) {
-      const adverts: Nullable<Advert> = await this.getAdvertData(link);
-      console.log(adverts);
+      const advert: Nullable<Advert> = await this.getAdvertData(link);
+      if (this.outputStream && advert) {
+        if (this.firstAdvert) {
+          this.outputStream.write(`\n${JSON.stringify({ ...advert })}`);
+        } else {
+          this.outputStream.write(`,\n${JSON.stringify({ ...advert })}`);
+        }
+        this.firstAdvert = false;
+      }
     }
   }
 
-  async scrapeAdverts(url: string, pages: number): Promise<void> {
+  private async scrapeAdverts(
+    url: string,
+    outputPath: string,
+    pages: number
+  ): Promise<void> {
     let count = 0;
     let page: Nullable<Page> = null;
-    for await (const [links, currentPage] of this.getPages(url)) {
-      if (links.length) await this.getAdverts(links);
-      console.log(count, links.length);
-      page = currentPage;
-      count++;
-      if (count === pages) break;
+    this.outputStream = createWriteStream(resolve(outputPath, 'adverts.json'));
+    this.outputStream.write('[');
+    try {
+      for await (const [links, currentPage] of this.getPages(url)) {
+        if (links.length) await this.getAdverts(links);
+        console.log(count, links.length);
+        page = currentPage;
+        count++;
+        if (count === pages) break;
+      }
+    } catch (err) {
+      console.log(err);
     }
     if (page && !page.isClosed()) await page.close();
+    if (this.outputStream) this.outputStream.end('\n]\n');
   }
 
-  async scrape(url: string, pages = 15): Promise<void> {
+  private async clean(): Promise<void> {
+    if (this.outputStream && !this.outputStream.writableEnded) {
+      this.outputStream.end();
+    }
+    this.outputStream = null;
+    if (this.browser) await this.browser.close();
+    this.browser = null;
+    this.firstAdvert = true;
+  }
+
+  async scrape(
+    url: string,
+    outputPath: string = process.cwd(),
+    pages = 0
+  ): Promise<void> {
     try {
       await this.startBrowser();
-      if (!this.browser) return;
-      await this.scrapeAdverts(url, pages);
+      if (this.browser) await this.scrapeAdverts(url, outputPath, pages);
     } catch (err) {
       console.log(err);
     } finally {
-      if (this.browser) await this.browser.close();
-      this.browser = null;
+      await this.clean();
     }
   }
 }
