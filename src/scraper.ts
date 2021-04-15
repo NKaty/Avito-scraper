@@ -14,7 +14,7 @@ interface Advert {
 }
 
 class Scraper {
-  browser?: Browser;
+  browser: Nullable<Browser> = null;
 
   private async startBrowser(): Promise<void> {
     try {
@@ -28,22 +28,44 @@ class Scraper {
     }
   }
 
-  private async getAdvertLinks(url: string): Promise<string[]> {
+  private async *getPages(url: string) {
     let urls: string[] = [];
     if (!this.browser) return urls;
-    const page = await this.browser.newPage();
-    console.log(`Navigating to ${url}...`);
+    let page: Nullable<Page> = await this.browser.newPage();
     try {
       await page.goto(url);
-      await page.waitForSelector('div[data-marker="catalog-serp"]');
-      urls = await page.$$eval(
-        'div[data-marker="catalog-serp"] > div[data-marker="item"] div[class*="iva-item-body-"] a[itemprop="url"]',
-        links => links.map(el => (el as HTMLAnchorElement).href)
-      );
+      while (page) {
+        console.log(`Navigating to ${page.url()}...`);
+        await page.waitForSelector('div[data-marker="catalog-serp"]');
+        urls = await page.$$eval(
+          'div[data-marker="catalog-serp"] > div[data-marker="item"] div[class*="iva-item-body-"] a[itemprop="url"]',
+          links => links.map(el => (el as HTMLAnchorElement).href)
+        );
+        const result: [string[], Page] = [urls, page];
+        yield result;
+        let nextButtonClasses: Nullable<string> = null;
+        try {
+          nextButtonClasses = await page.$eval(
+            '[data-marker="pagination-button/next"]',
+            item => item.classList.value
+          );
+        } catch (e) {}
+        if (
+          !nextButtonClasses ||
+          nextButtonClasses.includes('pagination-item_readonly')
+        ) {
+          if (page && !page.isClosed()) await page.close();
+          page = null;
+          console.log('last page');
+        } else {
+          console.log('click');
+          await page.click('[data-marker="pagination-button/next"]');
+        }
+      }
     } catch (err) {
-      console.log('Could not get advert links: ', err);
+      console.log(`Could not get page: `, err);
+      if (page && !page.isClosed()) await page.close();
     }
-    return urls;
   }
 
   private async getTitle(page: Page): Promise<Nullable<string>> {
@@ -115,7 +137,7 @@ class Scraper {
     return date;
   }
 
-  private async getPageData(url: string): Promise<Nullable<Advert>> {
+  private async getAdvertData(url: string): Promise<Nullable<Advert>> {
     let advert: Nullable<Advert> = null;
     if (!this.browser) return advert;
     let page: Page | undefined;
@@ -140,23 +162,37 @@ class Scraper {
     return advert;
   }
 
-  private async getData(urls: string[]): Promise<void> {
+  private async getAdverts(urls: string[]): Promise<void> {
     for (const link of urls) {
-      const adverts: Nullable<Advert> = await this.getPageData(link);
+      const adverts: Nullable<Advert> = await this.getAdvertData(link);
       console.log(adverts);
     }
   }
 
-  async scrape(url: string): Promise<void> {
-    await this.startBrowser();
-    if (!this.browser) return;
-    const links = await this.getAdvertLinks(url);
-    if (!links.length) {
-      await this.browser.close();
-      return;
+  async scrapeAdverts(url: string, pages: number): Promise<void> {
+    let count = 0;
+    let page: Nullable<Page> = null;
+    for await (const [links, currentPage] of this.getPages(url)) {
+      if (links.length) await this.getAdverts(links);
+      console.log(count, links.length);
+      page = currentPage;
+      count++;
+      if (count === pages) break;
     }
-    await this.getData(links);
-    await this.browser.close();
+    if (page && !page.isClosed()) await page.close();
+  }
+
+  async scrape(url: string, pages = 15): Promise<void> {
+    try {
+      await this.startBrowser();
+      if (!this.browser) return;
+      await this.scrapeAdverts(url, pages);
+    } catch (err) {
+      console.log(err);
+    } finally {
+      if (this.browser) await this.browser.close();
+      this.browser = null;
+    }
   }
 }
 
