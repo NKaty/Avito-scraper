@@ -1,8 +1,12 @@
-import puppeteer, { Browser, Page } from 'puppeteer';
+import puppeteer, { Browser, Page, Protocol } from 'puppeteer';
 import { Writable } from 'stream';
 import { createWriteStream } from 'fs';
 import { resolve } from 'path';
-import getDate from './utils/getDate';
+import ratelimit from 'promise-ratelimit';
+import dotenv from 'dotenv';
+import Cookie = Protocol.Network.Cookie;
+
+dotenv.config();
 
 type Nullable<T> = T | null;
 
@@ -13,18 +17,24 @@ interface Advert {
   price: Nullable<number>;
   author: Nullable<string>;
   date: Nullable<string>; // ISO-8601
-  // phone: string;
+  phone: Nullable<string>;
 }
 
 class Scraper {
   private browser: Nullable<Browser> = null;
+  private cookie: Nullable<Array<Cookie>> = null;
   private outputStream: Nullable<Writable> = null;
+  private authPage: Nullable<Page> = null;
   private firstAdvert = true;
+  private cookieError = false;
+  private throttle = ratelimit(3000);
+  private key = 'af0deccbgcgidddjgnvljitntccdduijhdinfgjgfjir';
+  private userAgent =
+    'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.66 Mobile Safari/537.36';
 
   private async startBrowser(): Promise<void> {
     try {
       this.browser = await puppeteer.launch({
-        // headless: false,
         args: ['--disable-setuid-sandbox'],
         ignoreHTTPSErrors: true,
       });
@@ -34,27 +44,34 @@ class Scraper {
   }
 
   private async *getPages(url: string) {
-    let urls: string[] = [];
-    if (!this.browser) return urls;
+    let ids: string[] = [];
+    if (!this.browser) return ids;
     let page: Nullable<Page> = await this.browser.newPage();
+    await page.setDefaultNavigationTimeout(120000);
+
     try {
       await page.goto(url);
       while (page) {
         console.log(`Navigating to ${page.url()}...`);
-        await page.waitForSelector('div[data-marker="catalog-serp"]');
-        urls = await page.$$eval(
+        await page.waitForSelector('div[class*="items-items-"]');
+        ids = await page.$$eval(
           'div[data-marker="catalog-serp"] > div[data-marker="item"] div[class*="iva-item-body-"] a[itemprop="url"]',
-          links => links.map(el => (el as HTMLAnchorElement).href)
+          links =>
+            links.map(
+              el => (el as HTMLAnchorElement).href.split('_').slice(-1)[0]
+            )
         );
-        const result: [string[], Page] = [urls, page];
+        const result: [string[], Page] = [ids, page];
         yield result;
+
         let nextButtonClasses: Nullable<string> = null;
         try {
           nextButtonClasses = await page.$eval(
             '[data-marker="pagination-button/next"]',
             item => item.classList.value
           );
-        } catch (e) {}
+        } catch (err) {}
+
         if (
           !nextButtonClasses ||
           nextButtonClasses.includes('pagination-item_readonly')
@@ -64,136 +81,125 @@ class Scraper {
           console.log('last page');
         } else {
           console.log('click');
-          await page.click('[data-marker="pagination-button/next"]');
+          // await Promise.all([
+          //   page.waitForNavigation(),
+          //   page.click('span[data-marker="pagination-button/next"]'),
+          // ]);
+          await page.click('span[data-marker="pagination-button/next"]');
         }
       }
     } catch (err) {
-      console.log(`Could not get page: `, err);
+      console.log(`Could not get page: ${page?.url()}`, err);
       if (page && !page.isClosed()) await page.close();
     }
   }
 
-  private async getTitle(page: Page): Promise<Nullable<string>> {
-    let title: Nullable<string> = null;
+  private async getCookie(): Promise<void> {
+    if (!this.browser) return;
+    let page: Nullable<Page> = null;
+
     try {
-      title = await page.$eval(
-        '.title-info-title-text[itemprop="name"]',
-        item => item.textContent
-      );
-      if (title) title = title.trim();
+      page = await this.browser.newPage();
+      await page.setDefaultNavigationTimeout(120000);
+      await page.setUserAgent(this.userAgent);
+      await page.goto('https://m.avito.ru/#login');
+      await page.waitForSelector('#app');
+
+      if (process.env.USERNAME && process.env.PASSWORD) {
+        // await Promise.all([
+        //   page.waitForNavigation(),
+        //   page.click('div[data-marker="login-button"'),
+        // ]);
+        await page.click('div[data-marker="login-button"');
+        await page.type('input[name="login"]', process.env.USERNAME);
+        await page.type('input[name="password"]', process.env.PASSWORD);
+        // await Promise.all([
+        //   page.waitForNavigation(),
+        //   page.click('input[type="submit"'),
+        // ]);
+        await page.click('input[type="submit"');
+      }
+      this.cookie = await page.cookies();
+      this.authPage = page;
     } catch (err) {
-      console.log('Could not get title: ', err);
+      console.log('Could not get cookie:', err);
+      this.cookieError = true;
     }
-    return title;
   }
 
-  private async getDescription(page: Page): Promise<Nullable<string>> {
-    let description: Nullable<string> = null;
-    try {
-      description = await page.$eval(
-        '.item-description-text[itemprop="description"] > p',
-        item => item.textContent
-      );
-      if (description) description = description.trim();
-    } catch (err) {
-      console.log('Could not get description: ', err);
-    }
-    return description;
-  }
-
-  private async getPrice(page: Page): Promise<Nullable<number>> {
-    let price: Nullable<number> = null;
-    try {
-      price = await page.$eval('.item-price [itemprop="price"]', item => {
-        const price = item.getAttribute('content');
-        return price === null || price === undefined ? null : +price;
-      });
-    } catch (err) {
-      console.log('Could not get price: ', err);
-    }
-    return price;
-  }
-
-  private async getAuthor(page: Page): Promise<Nullable<string>> {
-    let author: Nullable<string> = null;
-    try {
-      author = await page.$eval(
-        '.seller-info-name > a',
-        item => item.textContent
-      );
-      if (author) author = author.trim();
-    } catch (err) {
-      console.log('Could not get author: ', err);
-    }
-    return author;
-  }
-
-  private async getDate(page: Page): Promise<Nullable<string>> {
-    let date: Nullable<string> = null;
-    try {
-      date = await page.$eval(
-        '.title-info-actions .title-info-metadata-item-redesign',
-        item => item.textContent
-      );
-      if (date) date = getDate(date.trim());
-    } catch (err) {
-      console.log('Could not get date: ', err);
-    }
-    return date;
-  }
-
-  private async getAdvertData(url: string): Promise<Nullable<Advert>> {
+  private async getAdvertData(id: string): Promise<Nullable<Advert>> {
     let advert: Nullable<Advert> = null;
     if (!this.browser) return advert;
     let page: Page | undefined;
+
     try {
+      if (!this.cookieError && !this.cookie) await this.getCookie();
       const page = await this.browser.newPage();
-      await page.setDefaultNavigationTimeout(0);
-      await page.goto(url);
-      await page.waitForSelector('.item-view');
+      await page.setUserAgent(this.userAgent);
+      if (this.cookie) await page.setCookie(...this.cookie);
+
+      await this.throttle();
+      const advertResponse = await page.goto(
+        `https://m.avito.ru/api/15/items/${id}?key=${this.key}`
+      );
+      const advertData = await advertResponse.json();
+
+      await this.throttle();
+      const phoneResponse = await page.goto(
+        `https://m.avito.ru/api/1/items/${id}/phone?key=${this.key}`
+      );
+      const phoneData = await phoneResponse.json();
+      const phone = phoneData.result?.action?.uri.split('%2B').slice(-1)[0];
+
       advert = {
-        title: await this.getTitle(page),
-        description: await this.getDescription(page),
-        url,
-        price: await this.getPrice(page),
-        author: await this.getAuthor(page),
-        date: await this.getDate(page),
+        title: advertData.title,
+        description: advertData.description,
+        url: advertData.seo.canonicalUrl,
+        price: isNaN(advertData.price.value) ? 0 : +advertData.price.value,
+        author: advertData.seller.name,
+        date: new Date(+advertData.time * 1000).toISOString(),
+        phone: isNaN(+phone) ? null : phone,
       };
     } catch (err) {
-      console.log(`Could not get ${url}: `, err);
-    } finally {
-      if (page && !page.isClosed()) await page.close();
+      console.log(`Could not get advert (${id}): `, err);
     }
+
+    if (page && !page.isClosed()) await page.close();
     return advert;
   }
 
-  private async getAdverts(urls: string[]): Promise<void> {
-    for (const link of urls) {
-      const advert: Nullable<Advert> = await this.getAdvertData(link);
-      if (this.outputStream && advert) {
-        if (this.firstAdvert) {
-          this.outputStream.write(`\n${JSON.stringify({ ...advert })}`);
-        } else {
-          this.outputStream.write(`,\n${JSON.stringify({ ...advert })}`);
+  private async getAdverts(ids: string[]): Promise<void> {
+    try {
+      for (const id of ids) {
+        const advert: Nullable<Advert> = await this.getAdvertData(id);
+        if (this.outputStream && advert) {
+          if (this.firstAdvert) {
+            this.outputStream.write(`\n${JSON.stringify({ ...advert })}`);
+          } else {
+            this.outputStream.write(`,\n${JSON.stringify({ ...advert })}`);
+          }
+          this.firstAdvert = false;
         }
-        this.firstAdvert = false;
       }
+    } catch (err) {
+      console.log('An error occurred while writing to the file.');
     }
   }
 
   private async scrapeAdverts(
     url: string,
     outputPath: string,
+    fileName: string,
     pages: number
   ): Promise<void> {
     let count = 0;
     let page: Nullable<Page> = null;
-    this.outputStream = createWriteStream(resolve(outputPath, 'adverts.json'));
+    this.outputStream = createWriteStream(resolve(outputPath, fileName));
     this.outputStream.write('[');
     try {
-      for await (const [links, currentPage] of this.getPages(url)) {
-        if (links.length) await this.getAdverts(links);
-        console.log(count, links.length);
+      for await (const [ids, currentPage] of this.getPages(url)) {
+        if (ids.length) await this.getAdverts(ids);
+        console.log(count, ids.length);
         page = currentPage;
         count++;
         if (count === pages) break;
@@ -206,28 +212,41 @@ class Scraper {
   }
 
   private async clean(): Promise<void> {
-    if (this.outputStream && !this.outputStream.writableEnded) {
-      this.outputStream.end();
-    }
-    this.outputStream = null;
-    if (this.browser) await this.browser.close();
-    this.browser = null;
     this.firstAdvert = true;
+    this.cookieError = false;
+
+    try {
+      if (this.authPage && !this.authPage.isClosed()) {
+        await this.authPage.close();
+      }
+
+      if (this.outputStream && !this.outputStream.writableEnded) {
+        this.outputStream.end();
+      }
+      this.outputStream = null;
+
+      if (this.browser) await this.browser.close();
+      this.browser = null;
+    } catch (err) {
+      console.log('Could not clean:', err);
+    }
   }
 
   async scrape(
     url: string,
     outputPath: string = process.cwd(),
+    fileName = 'adverts.json',
     pages = 0
   ): Promise<void> {
     try {
       await this.startBrowser();
-      if (this.browser) await this.scrapeAdverts(url, outputPath, pages);
+      if (this.browser) {
+        await this.scrapeAdverts(url, outputPath, fileName, pages);
+      }
     } catch (err) {
       console.log(err);
-    } finally {
-      await this.clean();
     }
+    await this.clean();
   }
 }
 
