@@ -4,6 +4,7 @@ import { createWriteStream } from 'fs';
 import { resolve } from 'path';
 import ratelimit from 'promise-ratelimit';
 import dotenv from 'dotenv';
+import toISOStringTimezoneOffset from './utils/convertDate';
 import { Nullable, Advert } from './types';
 import Cookie = Protocol.Network.Cookie;
 
@@ -192,7 +193,7 @@ class Scraper {
         author: advertData.seller?.name || '',
         date: isNaN(+advertData.time)
           ? ''
-          : new Date(+advertData.time * 1000).toISOString(),
+          : toISOStringTimezoneOffset(+advertData.time),
         phone: isNaN(+phone) ? '' : phone,
       };
     } catch (err) {
