@@ -17,8 +17,7 @@ class Scraper {
   private firstAdvert = true;
   private auth = false;
   // To make pauses between requests
-  private throttle = ratelimit(3000);
-  // Key for avito internal api
+  private throttle = ratelimit(30000);
   private key = 'af0deccbgcgidddjgnvljitntccdduijhdinfgjgfjir';
   private userAgent =
     'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.66 Mobile Safari/537.36';
@@ -34,75 +33,64 @@ class Scraper {
 
   // Creates a browser instance
   private async startBrowser(): Promise<void> {
-    try {
-      this.browser = await puppeteer.launch({
-        args: ['--disable-setuid-sandbox'],
-        ignoreHTTPSErrors: true,
-      });
-    } catch (err) {
-      console.log('Could not create a browser instance: ', err);
-    }
+    this.browser = await puppeteer.launch({
+      args: ['--disable-setuid-sandbox'],
+      ignoreHTTPSErrors: true,
+    });
   }
 
   // Gets advert ids from pages
   private async *getPages(url: string) {
-    let ids: string[] = [];
-    if (!this.browser) return ids;
+    if (!this.browser) throw new Error('There is no browser instance');
+
     this.advertsPage = await this.browser.newPage();
     // Increase the maximum navigation time
     // Sometimes 30 seconds is not enough
     await this.advertsPage.setDefaultTimeout(120000);
+    await this.advertsPage.goto(url);
 
-    try {
-      await this.advertsPage.goto(url);
-      while (this.advertsPage) {
-        console.log(`Navigating to ${this.advertsPage.url()}...`);
-        await this.advertsPage.waitForSelector('div[class*="items-items-"]');
-        // Get only the ids of the adverts that are related to the url
-        // (not vip, not other regions)
-        ids = await this.advertsPage.$$eval(
-          'div[data-marker="catalog-serp"] > div[data-marker="item"] div[class*="iva-item-body-"] a[itemprop="url"]',
-          links =>
-            links.map(
-              el => (el as HTMLAnchorElement).href.split('_').slice(-1)[0]
-            )
+    while (this.advertsPage) {
+      console.log(`Navigating to ${this.advertsPage.url()}...`);
+      await this.advertsPage.waitForSelector('div[class*="items-items-"]');
+      // Get only the ids of the adverts that are related to the url
+      // (not vip, not other regions)
+      const ids = await this.advertsPage.$$eval(
+        'div[data-marker="catalog-serp"] > div[data-marker="item"] div[class*="iva-item-body-"] a[itemprop="url"]',
+        links =>
+          links.map(
+            el => (el as HTMLAnchorElement).href.split('_').slice(-1)[0]
+          )
+      );
+      yield ids;
+
+      let nextButtonClasses: Nullable<string> = null;
+      try {
+        nextButtonClasses = await this.advertsPage.$eval(
+          'span[data-marker="pagination-button/next"]',
+          item => item.classList.value
         );
-        yield ids;
+      } catch (err) {}
 
-        let nextButtonClasses: Nullable<string> = null;
-        try {
-          nextButtonClasses = await this.advertsPage.$eval(
-            'span[data-marker="pagination-button/next"]',
-            item => item.classList.value
-          );
-        } catch (err) {}
-
-        if (
-          !nextButtonClasses ||
-          nextButtonClasses.includes('pagination-item_readonly')
-        ) {
-          if (this.advertsPage && !this.advertsPage.isClosed()) {
-            await this.advertsPage.close();
-          }
-          this.advertsPage = null;
-          console.log('last page');
-        } else {
-          console.log('click');
-          // Puppeteer recommends this pattern for click, but sometimes
-          // it doesn't work (TimeoutError: Navigation timeout exceeded)
-          // await Promise.all([
-          //   page.waitForNavigation(),
-          //   page.click('span[data-marker="pagination-button/next"]'),
-          // ]);
-          await this.advertsPage.click(
-            'span[data-marker="pagination-button/next"]'
-          );
+      if (
+        !nextButtonClasses ||
+        nextButtonClasses.includes('pagination-item_readonly')
+      ) {
+        if (this.advertsPage && !this.advertsPage.isClosed()) {
+          await this.advertsPage.close();
         }
-      }
-    } catch (err) {
-      console.log(`Could not get page ${this.advertsPage?.url()}: `, err);
-      if (this.advertsPage && !this.advertsPage.isClosed()) {
-        await this.advertsPage.close();
+        this.advertsPage = null;
+        console.log('last page');
+      } else {
+        console.log('click');
+        // Puppeteer recommends this pattern for click, but sometimes
+        // it doesn't work (TimeoutError: Navigation timeout exceeded)
+        // await Promise.all([
+        //   page.waitForNavigation(),
+        //   page.click('span[data-marker="pagination-button/next"]'),
+        // ]);
+        await this.advertsPage.click(
+          'span[data-marker="pagination-button/next"]'
+        );
       }
     }
   }
@@ -119,53 +107,46 @@ class Scraper {
   // So this code is written for educational purposes only and I don't
   // recommend using it in real scraping
   private async getRequestPage(): Promise<void> {
-    if (!this.browser) return;
+    if (!this.browser) throw new Error('There is no browser instance');
 
-    try {
-      this.requestPage = await this.browser.newPage();
-      // Increase the maximum navigation time
-      // Sometimes 30 seconds is not enough
-      await this.requestPage.setDefaultTimeout(120000);
-      // For a mobile version
-      await this.requestPage.setUserAgent(this.userAgent);
+    this.requestPage = await this.browser.newPage();
+    // Increase the maximum navigation time
+    // Sometimes 30 seconds is not enough
+    await this.requestPage.setDefaultTimeout(120000);
+    // For a mobile version
+    await this.requestPage.setUserAgent(this.userAgent);
 
-      // Username and password are stored in environment variables (.env file)
-      // Remember: your avito account will be banned after 20 phone numbers
-      if (this.auth && process.env.USERNAME && process.env.PASSWORD) {
-        await this.requestPage.goto('https://m.avito.ru/#login');
-        await this.requestPage.waitForSelector('#app');
-        // Puppeteer recommends this pattern for click, but sometimes
-        // it doesn't work (TimeoutError: Navigation timeout exceeded)
-        // await Promise.all([
-        //   page.waitForNavigation(),
-        //   page.click('div[data-marker="login-button"'),
-        // ]);
-        await this.requestPage.click('div[data-marker="login-button"');
-        await this.requestPage.type(
-          'input[name="login"]',
-          process.env.USERNAME
-        );
-        await this.requestPage.type(
-          'input[name="password"]',
-          process.env.PASSWORD
-        );
-        // Puppeteer recommends this pattern for click, but sometimes
-        // it doesn't work (TimeoutError: Navigation timeout exceeded)
-        // await Promise.all([
-        //   page.waitForNavigation(),
-        //   page.click('input[type="submit"'),
-        // ]);
-        await this.requestPage.click('input[type="submit"');
-      }
-    } catch (err) {
-      console.log('Could not get a request page: ', err);
+    // Username and password are stored in environment variables (.env file)
+    // Remember: your avito account will be banned after 20 phone numbers
+    if (this.auth && process.env.USERNAME && process.env.PASSWORD) {
+      await this.requestPage.goto('https://m.avito.ru/#login');
+      await this.requestPage.waitForSelector('#app');
+      // Puppeteer recommends this pattern for click, but sometimes
+      // it doesn't work (TimeoutError: Navigation timeout exceeded)
+      // await Promise.all([
+      //   page.waitForNavigation(),
+      //   page.click('div[data-marker="login-button"'),
+      // ]);
+      await this.requestPage.click('div[data-marker="login-button"');
+      await this.requestPage.type('input[name="login"]', process.env.USERNAME);
+      await this.requestPage.type(
+        'input[name="password"]',
+        process.env.PASSWORD
+      );
+      // Puppeteer recommends this pattern for click, but sometimes
+      // it doesn't work (TimeoutError: Navigation timeout exceeded)
+      // await Promise.all([
+      //   page.waitForNavigation(),
+      //   page.click('input[type="submit"'),
+      // ]);
+      await this.requestPage.click('input[type="submit"');
     }
   }
 
   // Makes requests to avito api to get advert data
   private async getAdvertData(id: string): Promise<Nullable<Advert>> {
+    if (!this.browser) throw new Error('There is no browser instance');
     let advert: Nullable<Advert> = null;
-    if (!this.browser) return advert;
 
     try {
       if (this.requestPage) {
@@ -214,30 +195,32 @@ class Scraper {
     return advert;
   }
 
+  private writeAdvert(advert: Advert): void {
+    if (this.outputStream) {
+      if (this.firstAdvert) {
+        this.outputStream.write(
+          `\n${JSON.stringify({ ...advert }, undefined, 2)}`
+        );
+      } else {
+        this.outputStream.write(
+          `,\n${JSON.stringify({ ...advert }, undefined, 2)}`
+        );
+      }
+      this.firstAdvert = false;
+    }
+  }
+
   // Writes the adverts to the file
   private async getAdverts(ids: string[]): Promise<void> {
-    try {
-      if (!this.requestPage || this.requestPage.isClosed()) {
-        await this.getRequestPage();
-      }
+    if (!this.requestPage || this.requestPage.isClosed()) {
+      await this.getRequestPage();
+    }
 
-      for (const id of ids) {
-        const advert: Nullable<Advert> = await this.getAdvertData(id);
-        if (this.outputStream && advert) {
-          if (this.firstAdvert) {
-            this.outputStream.write(
-              `\n${JSON.stringify({ ...advert }, undefined, 2)}`
-            );
-          } else {
-            this.outputStream.write(
-              `,\n${JSON.stringify({ ...advert }, undefined, 2)}`
-            );
-          }
-          this.firstAdvert = false;
-        }
-      }
-    } catch (err) {
-      console.log('An error occurred while writing to the file: ', err);
+    if (!this.requestPage) throw new Error('Could not get the request page.');
+
+    for (const id of ids) {
+      const advert: Nullable<Advert> = await this.getAdvertData(id);
+      if (advert) this.writeAdvert(advert);
     }
   }
 
@@ -286,15 +269,16 @@ class Scraper {
       }
       this.requestPage = null;
 
+      if (this.browser) await this.browser.close();
+      this.browser = null;
+
       if (this.outputStream && !this.outputStream.writableEnded) {
         this.outputStream.end();
       }
       this.outputStream = null;
-
-      if (this.browser) await this.browser.close();
-      this.browser = null;
     } catch (err) {
       console.log('Could not clean:', err);
+      process.exit(1);
     }
   }
 
@@ -317,7 +301,7 @@ class Scraper {
     // your avito account will be banned after about 20 phone numbers
     // So this code is written for educational purposes only and I don't
     // recommend using it in real scraping
-    auth = false,
+    auth = true,
     // number of pages to scrape (default value 0 means to scrape all pages)
     pages = 0
   ): Promise<void> {
