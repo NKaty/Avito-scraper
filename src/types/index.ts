@@ -9,3 +9,11 @@ export interface Advert {
   date: string; // ISO-8601
   phone: string;
 }
+
+export interface ScraperOptions {
+  url: string;
+  outputPath?: string;
+  fileName?: string;
+  auth?: boolean;
+  pages?: number;
+}

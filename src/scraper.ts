@@ -5,7 +5,7 @@ import { resolve } from 'path';
 import ratelimit from 'promise-ratelimit';
 import dotenv from 'dotenv';
 import toISOStringTimezoneOffset from './utils/convertDate';
-import { Nullable, Advert } from './types';
+import { Nullable, Advert, ScraperOptions } from './types';
 
 dotenv.config();
 
@@ -17,7 +17,7 @@ class Scraper {
   private firstAdvert = true;
   private auth = false;
   // To make pauses between requests
-  private throttle = ratelimit(30000);
+  private throttle = ratelimit(3000);
   private key = 'af0deccbgcgidddjgnvljitntccdduijhdinfgjgfjir';
   private userAgent =
     'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.66 Mobile Safari/537.36';
@@ -172,7 +172,7 @@ class Scraper {
         );
         const phoneData = await phoneResponse.json();
         const phone = phoneData.result?.action?.uri?.split('%2B').slice(-1)[0];
-        // console.log(phoneData);
+        console.log(phoneData);
 
         advert = {
           title: advertData.title || '',
@@ -283,14 +283,14 @@ class Scraper {
   }
 
   // Launches the scraping process
-  async scrape(
+  async scrape(options: ScraperOptions): Promise<void> {
     // url to scrape
-    url: string,
+    const url = options.url ?? '';
     // path to output directory
-    outputPath: string = process.cwd(),
+    const outputPath = options.outputPath ?? process.cwd();
     // name of output json file
-    fileName = 'adverts.json',
-    // use or don't use an authentication cookie to get phone numbers
+    const fileName = options.fileName ?? 'adverts.json';
+    // whether or not to use an authentication cookie to get phone numbers
     // default value false means not to use an authentication cookie
     // Authentication could be needed to get a phone number
     // Whether you can get a phone number without authentication or
@@ -299,12 +299,14 @@ class Scraper {
     // ATTENTION:
     // But if you scrape phone numbers while logged in,
     // your avito account will be banned after about 20 phone numbers
-    // So this code is written for educational purposes only and I don't
+    // So this feature is added for educational purposes only and I don't
     // recommend using it in real scraping
-    auth = true,
+    const auth = options.auth ?? false;
     // number of pages to scrape (default value 0 means to scrape all pages)
-    pages = 0
-  ): Promise<void> {
+    const pages = options.pages ?? 0;
+
+    if (!url) throw new Error('No url to scrape.');
+
     try {
       this.beforeStart(auth);
       await this.startBrowser();
@@ -314,6 +316,7 @@ class Scraper {
     } catch (err) {
       console.log('Got an error while scraping: ', err);
     }
+
     await this.clean();
   }
 }
