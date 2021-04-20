@@ -8,16 +8,19 @@ const argv = yargs(hideBin(process.argv))
   .option('u', {
     description: 'an url to scrape',
     demand: true,
+    type: 'string',
     alias: 'url',
   })
   .option('d', {
     description: 'a path to output directory',
     default: process.cwd(),
+    type: 'string',
     alias: 'directory',
   })
   .option('f', {
     description: 'a name of output json file',
     default: 'adverts.json',
+    type: 'string',
     alias: 'file',
   })
   // In order to use an authentication cookie you have to provide
@@ -41,6 +44,7 @@ const argv = yargs(hideBin(process.argv))
   .option('p', {
     description: 'number of pages to scrape',
     default: 0,
+    type: 'number',
     alias: 'pages',
   })
   .option('h', {
