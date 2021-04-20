@@ -50,7 +50,7 @@ class Scraper {
     await this.advertsPage.goto(url);
 
     while (this.advertsPage) {
-      console.log(`Navigating to ${this.advertsPage.url()}...`);
+      console.log(`Scraping ${this.advertsPage.url()}...`);
       await this.advertsPage.waitForSelector('div[class*="items-items-"]');
       // Get only the ids of the adverts that are related to the url
       // (not vip, not other regions)
@@ -79,14 +79,12 @@ class Scraper {
           await this.advertsPage.close();
         }
         this.advertsPage = null;
-        console.log('last page');
       } else {
-        console.log('click');
         // Puppeteer recommends this pattern for click, but sometimes
         // it doesn't work (TimeoutError: Navigation timeout exceeded)
         // await Promise.all([
-        //   page.waitForNavigation(),
-        //   page.click('span[data-marker="pagination-button/next"]'),
+        //   this.advertsPage.waitForNavigation(),
+        //   this.advertsPage.click('span[data-marker="pagination-button/next"]'),
         // ]);
         await this.advertsPage.click(
           'span[data-marker="pagination-button/next"]'
@@ -124,8 +122,8 @@ class Scraper {
       // Puppeteer recommends this pattern for click, but sometimes
       // it doesn't work (TimeoutError: Navigation timeout exceeded)
       // await Promise.all([
-      //   page.waitForNavigation(),
-      //   page.click('div[data-marker="login-button"'),
+      //   this.requestPage.waitForNavigation(),
+      //   this.requestPage.click('div[data-marker="login-button"'),
       // ]);
       await this.requestPage.click('div[data-marker="login-button"');
       await this.requestPage.type('input[name="login"]', process.env.USERNAME);
@@ -136,8 +134,8 @@ class Scraper {
       // Puppeteer recommends this pattern for click, but sometimes
       // it doesn't work (TimeoutError: Navigation timeout exceeded)
       // await Promise.all([
-      //   page.waitForNavigation(),
-      //   page.click('input[type="submit"'),
+      //   this.requestPage.waitForNavigation(),
+      //   this.requestPage.click('input[type="submit"'),
       // ]);
       await this.requestPage.click('input[type="submit"');
     }
@@ -172,7 +170,6 @@ class Scraper {
         );
         const phoneData = await phoneResponse.json();
         const phone = phoneData.result?.action?.uri?.split('%2B').slice(-1)[0];
-        console.log(phoneData);
 
         advert = {
           title: advertData.title || '',
@@ -201,12 +198,12 @@ class Scraper {
         this.outputStream.write(
           `\n${JSON.stringify({ ...advert }, undefined, 2)}`
         );
+        this.firstAdvert = false;
       } else {
         this.outputStream.write(
           `,\n${JSON.stringify({ ...advert }, undefined, 2)}`
         );
       }
-      this.firstAdvert = false;
     }
   }
 
@@ -240,7 +237,6 @@ class Scraper {
       for await (const ids of this.getPages(url)) {
         if (ids.length) await this.getAdverts(ids);
         count++;
-        console.log(count, ids.length);
         if (count === pages) break;
       }
     } catch (err) {
