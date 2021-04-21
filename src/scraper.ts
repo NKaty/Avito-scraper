@@ -114,6 +114,13 @@ class Scraper {
     // For a mobile version
     await this.requestPage.setUserAgent(this.userAgent);
 
+    // Remember: your avito account will be banned after 20 phone numbers
+    if (this.auth && (!process.env.USERNAME || process.env.PASSWORD)) {
+      throw new Error(
+        'You have to provide the username and password in .env file to your avito account in order to use an authentication cookie.'
+      );
+    }
+
     // Username and password are stored in environment variables (.env file)
     // Remember: your avito account will be banned after 20 phone numbers
     if (this.auth && process.env.USERNAME && process.env.PASSWORD) {
@@ -301,9 +308,8 @@ class Scraper {
     // number of pages to scrape (default value 0 means to scrape all pages)
     const pages = options.pages ?? 0;
 
-    if (!url) throw new Error('No url to scrape.');
-
     try {
+      if (!url) throw new Error('No url to scrape.');
       this.beforeStart(auth);
       await this.startBrowser();
       if (this.browser) {
