@@ -7,7 +7,7 @@ const argv = yargs(hideBin(process.argv))
   .usage('Usage: $0 [options]')
   .option('u', {
     description: 'an url to scrape',
-    demand: true,
+    demandOption: 'You have to provide an url to scrape',
     type: 'string',
     alias: 'url',
   })
@@ -42,8 +42,9 @@ const argv = yargs(hideBin(process.argv))
   })
   // default value 0 means to scrape all pages
   .option('p', {
-    description: 'number of pages to scrape',
+    description: 'a number of pages to scrape',
     default: 0,
+    defaultDescription: 'all pages',
     type: 'number',
     alias: 'pages',
   })
@@ -57,7 +58,7 @@ const scraper = new Scraper();
 
 const options: ScraperOptions = {
   url: argv.url as string,
-  outputPath: argv.path as string,
+  outputPath: argv.directory as string,
   fileName: argv.file as string,
   auth: argv.auth as boolean,
   pages: argv.pages as number,
